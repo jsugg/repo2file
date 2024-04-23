@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Error codes as named constants
 declare -r ERR_CODE=1
@@ -12,7 +12,7 @@ declare -r DIR_CREATION_ERR_CODE=8
 
 declare -r SCRIPT_NAME=$(basename "$0")
 declare -r WORKING_DIR=$(pwd)
-
+declare -r TERM_COLUMNS=80
 declare verbose=0 quiet=0 progress=0 use_gitignore=0
 declare exclude_patterns=()
 declare exclude_regex=""
@@ -38,19 +38,42 @@ check_dependencies() {
     done
 
     if [ ${#missing_deps[@]} -ne 0 ]; then
-        printf "Missing dependencies: ${missing_deps[*]}\n"
-        read -p "Do you want to install them? (y/n): " response
-        if [[ "$response" =~ ^[Yy]$ ]]; then
+        printf "Installing missing dependencies: %s\n" "${missing_deps[*]}"
             if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-                install_cmd="sudo apt-get install -y"
-            elif [[ "$OSTYPE" == "darwin"* ]]; then
-                install_cmd="brew install"
+                # Detect Linux Distribution and set package manager
+                if [ -f /etc/os-release ]; then
+                    . /etc/os-release
+                    case $ID in
+                        debian|ubuntu) install_cmd=("sudo" "apt-get" "install" "-y") ;;
+                        fedora|rhel|centos)
+                            if [ "${VERSION_ID::1}" -ge 8 ]; then
+                                install_cmd=("sudo" "dnf" "install" "-y")
+                            else
+                                install_cmd=("sudo" "yum" "install" "-y")
+                            fi ;;
+                        arch) install_cmd=("sudo" "pacman" "-S" "--noconfirm") ;;
+                        opensuse-leap|sles|opensuse-tumbleweed) install_cmd=("sudo" "zypper" "install" "-y") ;;
+                        alpine) install_cmd=("sudo" "apk" "add") ;;
+                        *) echo "Unsupported distribution: $ID"; exit $DEP_MISSING_CODE ;;
+                    esac
+                else
+                    echo "Cannot identify the Linux distribution."
+                    exit $DEP_MISSING_CODE
+                fi
+            elif [[ "$OSTYPE" == "darwin" ]]; then
+                # MacOS
+                if ! command -v brew >/dev/null; then
+                    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                fi
+                install_cmd=("brew" "install")
+            elif [[ "$OSTYPE" == "linux-microsoft" ]]; then
+                # Windows Subsystem for Linux
+                install_cmd=("sudo" "apt-get" "install" "-y")
+            else
+                printf "Unsupported OS type: %s.\n" "$OSTYPE"
+                exit $DEP_MISSING_CODE
             fi
-            echo "$install_cmd ${missing_deps[*]}"
-            eval "$install_cmd ${missing_deps[*]}"
-        else
-            exit $DEP_MISSING_CODE
-        fi
+            "${install_cmd[@]}" "${missing_deps[@]}"
     fi
 }
 
@@ -60,35 +83,59 @@ check_git_repository() {
     [ $verbose -eq 1 ] && printf -- "Checking git repository...\n"
     local git_dir=$(git rev-parse --git-dir 2>/dev/null)
     if [[ "$use_gitignore" -eq 1 && -z "$git_dir" ]]; then
-        printf -- "This script should be run from the root of a git repository when using --gitignore.\n"
+        printf -- "This script should be run from a git repository when using --gitignore.\n"
         exit $GIT_REPO_ERR_CODE
     fi
 }
 
 # Convert glob patterns to regex
 glob_to_regex() {
-    # local pattern=$1
-    # pattern="${pattern//+/\\+}"     # Escape '+'
-    # pattern="${pattern//./\\.}"     # Escape '.'
-    # pattern="${pattern//\*/.*}"     # Convert '*' to '.*'
-    # pattern="${pattern//\?/.}"      # Convert '?' to '.'
-    # echo ".*$pattern.*"
     local pattern=$1
-    # Escape special regex characters except '*' and '?'
-    pattern=$(sed 's/[]\/$*.^[]/\\&/g' <<< "$pattern")
-    # Convert '*' (zero or more of any character)
-    pattern="${pattern//\*/.*}"
-    # Convert '?' (exactly one of any character)
-    pattern="${pattern//\?/.}"
-    echo "$pattern"
+    local regex=""
+    local i=0
+    local len=${#pattern}
+    local in_brackets=false
+
+    for ((i = 0; i < len; i++)); do
+        local c=${pattern:i:1}
+        if $in_brackets; then
+            if [ "$c" = "]" ]; then
+                in_brackets=false
+                regex+="\\]"
+            elif [ "$c" = "\"" ]; then
+                regex+="\\"
+            else
+                regex+="$c"
+            fi
+        elif [ "$c" = "[" ]; then
+            in_brackets=true
+            regex+="\\["
+        elif [ "$c" = "\"" ]; then
+            regex+="\\"
+        elif [ "$c" = "*" ]; then
+            regex+="[^/]*"
+        elif [ "$c" = "?" ]; then
+            regex+="."
+        elif [ "$c" = "." ]; then
+            regex+="\\."
+        elif [ "$c" = "/" ]; then
+            regex+="\\/"
+        else
+            regex+="$c"
+        fi
+    done
+
+    # Add anchors to ensure the pattern matches the whole string
+    regex="^$regex$"
+
+    printf -- "%s" "$regex"
 }
 
-# Compile exclusion regex from patterns
 compile_exclusion_regex() {
     exclude_regex=""
     for pattern in "${exclude_patterns[@]}"; do
         local regex_pattern=$(glob_to_regex "$pattern")
-        exclude_regex+="$regex_pattern|"
+        exclude_regex+="(^|/)$regex_pattern(\$|/)|"
         [ $verbose -eq 1 ] && printf "Compiled regex for pattern '%s': %s\n" "$pattern" "$regex_pattern"
     done
     exclude_regex="${exclude_regex%|}"  # Remove trailing '|'
@@ -99,7 +146,7 @@ compile_exclusion_regex() {
 # Function to check if a file is text or binary
 is_text_file() {
     local file="$1"
-    if file -I "$file" | grep -q 'text/'; then
+    if file -b --mime-type "$file" | grep -q 'text/'; then
         return 0  # It's text
     fi
     return 1  # It's binary or unknown
@@ -112,11 +159,11 @@ parse_args() {
             -h|--help)
                 display_help_message; exit 0 ;;
             -v|--verbose)
-                [[ $quiet -eq 0 ]] && verbose=1 ;;
+                quiet=0; verbose=1 ;;
             -q|--quiet)
                 quiet=1; verbose=0; progress=0 ;;
             -p|--progress)
-                [[ $quiet -eq 0 ]] && progress=1 ;;
+                quiet=0; progress=1 ;;
             -o|--output)
                 shift
                 if [[ -z "$1" ]]; then
@@ -137,7 +184,6 @@ parse_args() {
                 fi
                 # exclude_patterns+=("$(glob_to_regex "$1")") ;;
                 exclude_patterns+=("$1")
-                compile_exclusion_regex
                 ;;
             -g|--gitignore)
                 use_gitignore=1 ;;
@@ -155,10 +201,11 @@ parse_args() {
                 done
                 ;;
             *)
-                printf "Unknown parameter: %s\n" "$1"; display_help_message; exit 0 ;;
+                printf "Unknown parameter.\n"; display_help_message; exit 0 ;;
         esac
         shift
     done
+    compile_exclusion_regex
 }
 
 display_help_message() {
@@ -166,14 +213,14 @@ display_help_message() {
     cat <<-EOF
 		Usage: $SCRIPT_NAME [options]
 
-		This script processes the files within a Git repository or a specified directory, checking for text files and appending their contents to a markdown file with an optional directory structure. It's designed to be robust and secure, making use of best practices for Bash scripting.
+		This script processes the files within a Git repository, checking for text files and appending their contents and the project's directory structure to a markdown file.
 
 		Options:
 		  -h, --help           Show this help message and exit.
 		  -v, --verbose        Enable verbose mode. Prints detailed logs to standard output.
 		  -q, --quiet          Disable all output except errors.
 		  -p, --progress       Enable progress display, showing a progress bar during execution.
-		  -o, --output FILE    Specify the output markdown file where results should be written. Default is 'repo2file.md' in the current directory.
+		  -o, --output FILE    Specify the output markdown file where results should be written. Default is 'repo2file.md'.
 		  -e, --exclude PATTERN Exclude files or directories that match this pattern. Can be specified multiple times.
 		  -g, --gitignore      Apply .gitignore rules for excluding files.
 
@@ -182,64 +229,144 @@ display_help_message() {
 		  ./$SCRIPT_NAME --output results.md      # Runs the script and outputs to 'results.md'.
 		  ./$SCRIPT_NAME -v -p --exclude '*.tmp'  # Runs the script in verbose mode, shows progress, and excludes files matching '*.tmp'.
 		  ./$SCRIPT_NAME -g                       # Applies .gitignore rules when processing files.
+  ./$SCRIPT_NAME -vg                      # Runs the script in verbose mode and applies .gitignore rules when processing files.
+  ./$SCRIPT_NAME -pg                      # Runs the script displaying progress and applies .gitignore rules when processing files.
 
 		EOF
 }
 
-# Replicate the project in a temporary directory
-create_temp_dir() {
-    local file_list=("$@")
-    [ $verbose -eq 1 ] && printf "Creating temporary directory\n"
-    temp_dir=$(mktemp -d) || { printf "Error creating temporary directory.\n"; exit $ERR_CODE; }
+function is_command_available() {
+  command -v "$1" > /dev/null 2>&1
+}
 
+function create_dir_with_mktemp() {
+  local dir_path="$1"
+  local dir_base="repo2file_"
+  local project="$(basename "$(pwd)" | sed 's/ /_/g')"
+  mktemp -d "${dir_path}${dir_base}-${project}"
+}
+
+function create_dir_with_tempfile() {
+  local dir_path="$1"
+  local dir_base="repo2file_"
+  local project=$(basename "$(pwd)")
+  local temp_dir=$(tempfile -d "${dir_path}" "${dir_base}" "${project}")
+  printf -- "$temp_dir"
+}
+
+function create_unique_dir_fallback_mkdir() {
+  local dir_path="$1"
+  local dir_base="repo2file_"
+  local max_attempts=100
+  local attempt=0
+
+  while [ "$attempt" -lt "$max_attempts" ]; do
+    attempt=$((attempt + 1))
+    local _temp_dir="${dir_path}/${dir_base}$(date +%s%N)_$$"
+
+    if mkdir "$_temp_dir" 2>/dev/null; then
+      printf -- "%s" $_temp_dir
+      return
+    fi
+  done
+
+  printf -- "Failed to create a temporary directory after $max_attempts attempts."
+  return $DIR_CREATION_ERR_CODE
+}
+
+function create_unique_dir() {
+  local dir_path="$1"
+
+  if is_command_available "mktemp"; then
+    create_dir_with_mktemp "$dir_path"
+  elif is_command_available "tempfile"; then
+    create_dir_with_tempfile "$dir_path"
+  else
+    create_unique_dir_fallback_mkdir "$dir_path"
+  fi
+}
+
+
+# Replicate the project in a temporary directory
+function create_temp_dir() {
+    local file_list=("$@")
+    local tmp="${TMPDIR}"
+    
+    # Create a temporary directory
+    [ $verbose -eq 1 ] && printf "Creating temporary directory\n"
+    temp_dir=$(create_unique_dir "$tmp")
+    [ $verbose -eq 1 ] && printf "  %s\n" "$temp_dir"
+
+    # Copy the files to the temporary directory
+    [ $verbose -eq 1 ] && printf "Copying files:\n"
     for file in "${file_list[@]}"; do
         temp_file_dir="$temp_dir/$(dirname "$file")"
         mkdir -p "$temp_file_dir" || { printf "Error creating directory: %s\n" "$temp_file_dir"; exit $DIR_CREATION_ERR_CODE; }
-        [ $verbose -eq 1 ] && printf "Copying file: %s\n" "$file"
-        cp "$file" "$temp_file_dir" || { printf "Error copying file: %s\n" "$file"; exit $FILE_ACCESS_ERR_CODE; }
+        cp -a "$WORKING_DIR/$file" "$temp_file_dir/$(basename "$file")" || { printf "Error copying file: %s\n" "$file"; exit $FILE_ACCESS_ERR_CODE; }
+        [ $verbose -eq 1 ] && printf "  %s\n" "$file"
     done
 
     [ $verbose -eq 1 ] && printf "Finished replicating project\n"
 }
 
 # Function to collect and filter files based on exclude patterns
-collect_files() {
+function collect_files() {
     local files=()
-    
-    
+    local cmd="git ls-files -z --cached -o"
+
+    [[ $use_gitignore -eq 1 ]] && cmd+=" --exclude-standard --exclude-from=$(git rev-parse --git-dir)/info/exclude"
+
     # Collect the files
-    if [[ $use_gitignore -eq 1 ]]; then
-        files=($(git -C "$WORKING_DIR" ls-files -co --exclude-from <(git -C "$WORKING_DIR" check-ignore *) | grep -vE "$output_file_name|.gitignore|$SCRIPT_NAME" || exit $EMPTY_DIR_ERR_CODE))
-    else
-        files=($(git -C "$WORKING_DIR" ls-files -co --exclude-standard | grep -vE "$output_file_name|.gitignore|$SCRIPT_NAME" || exit $EMPTY_DIR_ERR_CODE))
+    while IFS= read -r -d '' file; do
+        if [[ ! "$file" =~ $exclude_regex && "$file" != "$output_file_name" && "$file" != "$SCRIPT_NAME" && "$file" != ".gitignore" && ! -d "$WORKING_DIR/$file" ]]; then
+            files+=("$file")
+        fi
+    done < <($cmd || true)
+    git_exit_code=$?
+
+    # Check if git ls-files command failed
+    if [ $git_exit_code -ne 0 ]; then
+        printf "Error: git ls-files command failed with exit code %d\n" $git_exit_code
+        exit $git_exit_code
     fi
 
+    # Filter the binary files
+    local filtered_files=()
+    for file in "${files[@]}"; do
+        if is_text_file "$file"; then
+            filtered_files+=("$file")
+        fi
+    done
+    files=("${filtered_files[@]}")
+
+    # If exclude patterns are specified, filter the files
     if [[ -n "$exclude_regex" ]]; then
-        local filtered_files=()
+        filtered_files=()
         for file in "${files[@]}"; do
-            if ! [[ "$file" =~ $exclude_regex ]]; then
+            if ! [[ "$file" =~ ^.*\/$exclude_regex$ && "$(basename "$file")" =~ ^$exclude_regex$ ]] && ! [[ "$file" =~ ^$exclude_regex$ ]]; then
                 filtered_files+=("$file")
             fi
         done
         files=("${filtered_files[@]}")
     fi
 
-    printf "${files[*]}"
+    printf "%s " "${files[@]}"
 }
 
+
 # Function to append the header to the output file
-append_header() {
+function append_header() {
     [ $verbose -eq 1 ] && printf -- "Initializing %s\n" "$output_file_name"
     {
         printf -- "# Project Codebase\n"
-        printf -- "Root directory: %s\n" "$(pwd)"
+        printf -- "## Root directory\n \`%s\`\n" "$(pwd)"
         printf -- "---\n"
     } > "$output_file_name"
 }
 
 # Function to append the project tree to the output file
-append_directory_structure() {
-    [ $verbose -eq 1 ] && [ $quiet -eq 0 ] && printf -- "Appending directory structure to %s\n" "$output_file_name"
+function append_directory_structure() {
+    [ $verbose -eq 1 ] && printf -- "Appending directory structure to %s\n" "$output_file_name"
     {
         printf -- "## Directory structure:\n"
         printf -- "\`\`\`\n"
@@ -250,53 +377,79 @@ append_directory_structure() {
 }
 
 # Function to append the file contents to the output file
-append_file_content() {
+function append_file_content() {
     local relative_file_path=$1
     local full_file_path="$temp_dir/$relative_file_path"
 
-    # Check if the file is text
-    if ! is_text_file "$full_file_path"; then
-        [ $verbose -eq 1 ] && printf "Skipping binary or unsupported file: %s\n" "$relative_file_path"
-        return
-    fi
-
     # Check if the file exists and is readable
     [[ ! -f "$full_file_path" || ! -r "$full_file_path" ]] && printf -- "File %s cannot be read or does not exist.\n" "$full_file_path" && return
-    
-    [ $verbose -eq 1 ] && printf "Appending file: %s\n" "$relative_file_path"
 
     # Append the file content to the output file
-    printf "## File: %s\n" "$relative_file_path" | tee -a "$output_file_name" &>/dev/null
+    printf "## File: %s\n" "$relative_file_path" >> "$output_file_name"
     if [[ "${relative_file_path##*.}" == "md" ]]; then
-        printf -- "<!-- [FILE_START]\n" | tee -a "$output_file_name" &>/dev/null
-        awk '{ print }' "$full_file_path" | tee -a "$output_file_name" &>/dev/null
-        printf -- "\n[FILE_END] -->\n" | tee -a "$output_file_name" &>/dev/null
+        printf -- "See raw %s for markdown file contents\n<!-- [FILE_START]\n" "$output_file_name" >> "$output_file_name"
+        cat "$full_file_path" >> "$output_file_name"
+        printf -- "\n[FILE_END] -->\n" >> "$output_file_name"
     else
-        printf -- "\`\`\`\n" | tee -a "$output_file_name" &>/dev/null
-        awk '{ print }' "$full_file_path" | tee -a "$output_file_name" &>/dev/null
-        printf -- "\`\`\`\n\n" | tee -a "$output_file_name" &>/dev/null
+        printf -- "\`\`\`\n" >> "$output_file_name"
+        cat "$full_file_path" >> "$output_file_name"
+        printf -- "\`\`\`\n\n" >> "$output_file_name"
     fi
-    printf -- "---\n" | tee -a "$output_file_name" &>/dev/null
+    printf -- "---\n" >> "$output_file_name"
+}
+
+# Function to print a progress bar
+progress_hash=$(printf '%*s' 200 '' | tr ' ' '#')
+
+function display_progress_bar() {
+    local current=$1
+    local total=$2
+    # Adapt to the terminal width using tput if available, otherwise fall back to $COLUMNS
+    local cols
+    if command -v tput > /dev/null; then
+        cols=$(tput cols)
+        cols=$((cols - 10))
+    else
+        cols=$TERM_COLUMNS
+    fi
+    local percent=$((current * 100 / total))
+    local filled=$((cols * current / total))
+    printf -- "\r%3d%% [%-${cols}s]" "$percent" "${progress_hash:0:filled}"
 }
 
 # Process files in the project directory to be appended to the output file
-process_files() {
+function process_files() {
     local temp_dir=$1
     shift
     local file_list=("$@")
+    local total_files=${#file_list[@]}
+    local processed_files=0
+    local last_updated=-1
 
     [ $verbose -eq 1 ] && printf -- "Processing %d files...\n" "${#file_list[@]}"
 
     for file in "${file_list[@]}"; do
         local relative_file_path="${file#"${WORKING_DIR}/"}"
+
+        [ $verbose -eq 1 ] && printf -- "\n     $relative_file_path\n"
+
         append_file_content "$relative_file_path"
+
+        if [ $progress -eq 1 ]; then
+            ((processed_files++))
+            local new_percent=$((processed_files * 100 / total_files))
+            if [ $progress -eq 1 ] && [ "$new_percent" -ne "$last_updated" ]; then
+                display_progress_bar "$processed_files" "$total_files"
+                last_updated=$new_percent
+            fi
+        fi
     done
 
-    [ $progress -eq 1 ] && [ ! $quiet -eq 1 ] && printf -- "\r\033[K[100%%] Done\n"
+    printf "\n"
 }
 
 # Entry point of the script
-main() {
+function main() {
     parse_args "$@"
     check_dependencies
     check_git_repository
@@ -314,7 +467,7 @@ main() {
     create_temp_dir "${file_list[@]}"
     process_files "$temp_dir" "${file_list[@]}"
     cleanup
-    [ ! $quiet -eq 1 ] && printf -- "Operation completed. Output stored in %s\n" "$output_file_name"
+    [[ $quiet -eq 0 ]] && printf -- "Operation completed. Output stored in %s\n\n" "$output_file_name" || true
 }
 
 main "$@"
