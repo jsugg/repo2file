@@ -20,7 +20,9 @@ Whether you're leveraging AI for code analysis, refactoring, or other developmen
 
 Simply copy the line below and paste it into your terminal:
 
-```curl -sSL https://raw.githubusercontent.com/jsugg/repo2file/main/install.sh | bash -s```
+```bash
+curl -sSL https://raw.githubusercontent.com/jsugg/repo2file/main/install.sh | bash -s
+```
 
 ## Usage
 
