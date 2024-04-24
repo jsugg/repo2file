@@ -12,7 +12,7 @@ declare -r NO_WRITE_PERMISSIONS=8
 
 # Define script metadata
 declare -r SCRIPT_NAME="repo2file"
-declare -r SCRIPT_URL="https://raw.githubusercontent.com/jsugg/repo2file/main/$SCRIPT_NAME"
+declare -r SCRIPT_URL="https://raw.githubusercontent.com/jsugg/repo2file/main/src/$SCRIPT_NAME"
 declare -r SCRIPT_CHECKSUM_URL="https://gist.githubusercontent.com/jsugg/56a75fe37a4c0a15786c10b63a5f1ccc/raw/ba872193de73536b7c0e28f23d294938510bf66a/repo2file.sha256"
 declare INSTALL_DIR=""
 declare -r DEFAULT_INSTALL_DIR="$HOME/bin"
@@ -68,8 +68,10 @@ function get_os() {
 }
 
 # Helper function to get the package manager for the current platform
-discover_package_manager() {
-    local os=$(get_os)
+function discover_package_manager() {
+    local os=''
+    
+    os=$(get_os)
 
     if [[ "$os" == "Ubuntu/Debian" ]]; then
         echo "apt-get"
@@ -105,7 +107,9 @@ discover_package_manager() {
 # Function to install dependencies
 function install_dependencies() {
     local missing_deps=()
-    local package_manager=$(discover_package_manager)
+    local package_manager=''
+    
+    package_manager=$(discover_package_manager)
 
     for dep in "${DEPENDENCIES[@]}"; do
         if [[ "$dep" == "sha256sum" ]] && [[ "$package_manager" == "brew" || "$package_manager" == "homebrew" ]]; then
@@ -179,8 +183,10 @@ function sed_inplace() {
 }
 
 # Function to determine the appropriate shell configuration file
-find_appropriate_shell_config_file() {
-    local current_shell=$(basename "$SHELL")
+function find_appropriate_shell_config_file() {
+    local current_shell=''
+    
+    current_shell=$(basename "$SHELL")
 
     case $current_shell in
     bash | sh | dash | ksh | mksh | posh)
@@ -205,10 +211,13 @@ find_appropriate_shell_config_file() {
 function update_path_in_shell_config() {
     local install_dir=$1
     local shell_config_file=$2
-    local updated=false
+    local path_lines=''
+    local first_line=''
+    local current_path_line=''
+    local new_path=''
 
     # Fetch all lines containing 'export PATH='
-    local path_lines=$(grep -n '^export PATH=' "$shell_config_file")
+    path_lines=$(grep -n '^export PATH=' "$shell_config_file")
     if [[ -z "$path_lines" ]]; then
         # If no export PATH line exists, simply add one
         echo "export PATH=\$PATH:$install_dir" >>"$shell_config_file"
@@ -223,23 +232,22 @@ function update_path_in_shell_config() {
     fi
 
     # Update only the first 'export PATH' line if INSTALL_DIR is not found
-    local first_line=$(echo "$path_lines" | head -1 | cut -d: -f1)
-    local current_path_line=$(head -n "$first_line" "$shell_config_file" | tail -n 1)
-    local new_path="${current_path_line}:${install_dir}\""
+    first_line=$(echo "$path_lines" | head -1 | cut -d: -f1)
+    current_path_line=$(head -n "$first_line" "$shell_config_file" | tail -n 1)
+    new_path="${current_path_line}:${install_dir}\""
 
     # Use the sed_inplace function to update
     sed_inplace "${first_line}s|.*/|$new_path|" "$shell_config_file"
     log "${GREEN}Updated PATH in $shell_config_file.${NC}"
-    updated=true
-
-    return $updated
 }
 
 # Helper function to find the user's bin folder
-user_bin_folder() {
-    local os=$(get_os)
-    local bin_folder=""
-    local bin_folder=""
+function user_bin_folder() {
+    local os=''
+    local bin_folder=''
+    local shell_config=''
+
+    os=$(get_os)
 
     case "$os" in
     "Ubuntu/Debian" | "RHEL-based" | "Arch Linux" | "openSUSE" | "Alpine Linux")
@@ -271,9 +279,10 @@ user_bin_folder() {
     fi
 
     if ! echo "$PATH" | grep -q "(^|:)$bin_folder($|:)" && [[ "$os" != "Windows" ]]; then
-        local shell_config="$(find_appropriate_shell_config_file)"
+        shell_config="$(find_appropriate_shell_config_file)"
         if [ -f "$shell_config" ]; then
-            local updated=$(update_path_in_shell_config "$bin_folder" "$shell_config")
+            update_path_in_shell_config "$bin_folder" "$shell_config" &
+            wait $!
         fi
     elif [[ "$os" == "Windows" ]] && ! ([ -n "${PATH}" ] && echo "${PATH}" | findstr /R "^;\%USERPROFILE\%\\AppData\\Local\\bin;$" >nul 2>&1); then
         reg add "HKCU\Environment" /v PATH /t REG_EXPAND_SZ /d "%%PATH%%;%bin_folder%" /f >nul 2>&1
@@ -305,7 +314,7 @@ function install_script() {
                 curl --silent -fLo "${INSTALL_DIR}/${SCRIPT_NAME}.sha256" "${SCRIPT_CHECKSUM_URL}"; then
 
                 log "${GREEN}Verifying download...${NC}"
-                cd "${INSTALL_DIR}"
+                cd "${INSTALL_DIR}" || exit $ERR_CODE
                 sed_inplace '$ s/[ \t]*$//' "${SCRIPT_NAME}.sha256"
                 expected_checksum=$(awk '{print $1}' "${SCRIPT_NAME}.sha256")
                 calculated_checksum=$($(get_shasum_cmd) "${SCRIPT_NAME}" | awk '{print $1}')
@@ -331,7 +340,7 @@ function install_script() {
 }
 
 # Entry point
-main() {
+function main() {
     install_dependencies
     install_script
 }
