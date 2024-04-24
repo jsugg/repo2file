@@ -563,7 +563,7 @@ function main() {
     parse_args "$@"
     check_dependencies
     check_git_repository
-    local file_list=("$(collect_files)")
+    local file_list=($(collect_files))
     [[ ${#file_list[@]} -eq 0 ]] && {
         printf "Error: No files to process.\n"
         exit $EMPTY_DIR_ERR_CODE
