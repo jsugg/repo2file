@@ -114,7 +114,11 @@ Contributions are welcome! If you find any issues or have suggestions for improv
 
 This project is licensed under the [MIT License](LICENSE)
 
-## Markdown file format
+---
+
+## Markdown file format example
+
+---
 
 # Project Codebase
 ## Root directory
@@ -126,12 +130,11 @@ This project is licensed under the [MIT License](LICENSE)
 ├── LICENSE
 ├── README.md
 ├── install.sh
-├── repo2file
 ├── repo2file.md
 └── src
     └── repo2file
 
-2 directories, 6 files
+2 directories, 5 files
 ```
 
 ---
