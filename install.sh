@@ -13,7 +13,7 @@ declare -r NO_WRITE_PERMISSIONS=8
 # Define script metadata
 declare -r SCRIPT_NAME="repo2file"
 declare -r SCRIPT_URL="https://raw.githubusercontent.com/jsugg/repo2file/main/src/$SCRIPT_NAME"
-declare -r SCRIPT_CHECKSUM_URL="https://gist.githubusercontent.com/jsugg/56a75fe37a4c0a15786c10b63a5f1ccc/raw/ba872193de73536b7c0e28f23d294938510bf66a/repo2file.sha256"
+declare -r SCRIPT_CHECKSUM_URL="https://gist.githubusercontent.com/jsugg/56a75fe37a4c0a15786c10b63a5f1ccc/raw/13ec7edd258fc2db592278f542cb1607fe231f16/repo2file.sha256"
 declare INSTALL_DIR=""
 declare -r DEFAULT_INSTALL_DIR="$HOME/bin"
 declare -r DEPENDENCIES=("curl" "sha256sum" "tree" "file" "git" "awk")
@@ -105,7 +105,7 @@ function discover_package_manager() {
 }
 
 # Function to install dependencies
-function install_dependencies() {
+function verify_and_install_dependencies() {
     local missing_deps=()
     local package_manager=''
     
@@ -281,7 +281,7 @@ function user_bin_folder() {
     if ! echo "$PATH" | grep -q "(^|:)$bin_folder($|:)" && [[ "$os" != "Windows" ]]; then
         shell_config="$(find_appropriate_shell_config_file)"
         if [ -f "$shell_config" ]; then
-            update_path_in_shell_config "$bin_folder" "$shell_config" &
+            update_path_in_shell_config "$bin_folder" "$shell_config" >/dev/null 2>&1
             wait $!
         fi
     elif [[ "$os" == "Windows" ]] && ! ([ -n "${PATH}" ] && echo "${PATH}" | findstr /R "^;\%USERPROFILE\%\\AppData\\Local\\bin;$" >nul 2>&1); then
@@ -341,7 +341,7 @@ function install_script() {
 
 # Entry point
 function main() {
-    install_dependencies
+    verify_and_install_dependencies
     install_script
 }
 
