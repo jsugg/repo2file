@@ -139,6 +139,8 @@ function check_git_repository() {
         printf -- "This script should be run from a git repository when using --gitignore.\n"
         exit $GIT_REPO_ERR_CODE
     fi
+
+    [ $verbose -eq 1 ] && printf -- "Git repository found!\n"
 }
 
 # Convert glob patterns to regex
@@ -563,6 +565,7 @@ function main() {
     parse_args "$@"
     check_dependencies
     check_git_repository
+    [ $verbose -eq 1 ] && printf "Collecting files...\n"
     local file_list=($(collect_files))
     [[ ${#file_list[@]} -eq 0 ]] && {
         printf "Error: No files to process.\n"
@@ -575,9 +578,13 @@ function main() {
         [ $verbose -eq 1 ] && printf "  %s\n" "$file"
     done
 
+    [ $verbose -eq 1 ] && printf "Appending header...\n"
     append_header
+    [ $verbose -eq 1 ] && printf "Appending project tree...\n"
     append_directory_structure
+    [ $verbose -eq 1 ] && printf "Replicating project...\n"
     replicate_in_temp_dir "${file_list[@]}"
+    [ $verbose -eq 1 ] && printf "Processing files...\n"
     process_files "$temp_dir" "${file_list[@]}"
     cleanup
     [[ $quiet -eq 0 ]] && printf -- "Operation completed. Output stored in %s\n\n" "$output_file_name"
