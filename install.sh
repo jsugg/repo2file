@@ -324,6 +324,8 @@ function install_script() {
                     break
                 else
                     log "${RED}Checksum verification failed. Retrying download...${NC}"
+                    log "${RED}Expected: ${expected_checksum}${NC}"
+                    log "${RED}Calculated: ${calculated_checksum}${NC}"
                 fi
             else
                 log "${RED}Attempt $(($i + 1)) failed. Retrying in 3 seconds.${NC}"
