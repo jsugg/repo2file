@@ -310,8 +310,8 @@ function install_script() {
     if [ -d "$INSTALL_DIR" ]; then
         log "${YELLOW}Downloading ${SCRIPT_NAME} to ${INSTALL_DIR}...${NC}"
         for ((i = 0; i < retries; i++)); do
-            if curl --silent -fLo "${INSTALL_DIR}/${SCRIPT_NAME}" "${SCRIPT_URL}" &&
-                curl --silent -fLo "${INSTALL_DIR}/${SCRIPT_NAME}.sha256" "${SCRIPT_CHECKSUM_URL}"; then
+            if curl -H "Cache-Control: no-cache" --silent -fLo "${INSTALL_DIR}/${SCRIPT_NAME}" "${SCRIPT_URL}" &&
+                curl -H "Cache-Control: no-cache" --silent -fLo "${INSTALL_DIR}/${SCRIPT_NAME}.sha256" "${SCRIPT_CHECKSUM_URL}"; then
 
                 log "${GREEN}Verifying download...${NC}"
                 cd "${INSTALL_DIR}" || exit $ERR_CODE
