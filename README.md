@@ -116,7 +116,7 @@ This project is licensed under the [MIT License](LICENSE)
 
 ---
 
-## Markdown file format example
+## Output markdown file format example
 
 ---
 
