@@ -13,7 +13,7 @@ declare -r NO_WRITE_PERMISSIONS=8
 # Define script metadata
 declare -r SCRIPT_NAME="repo2file"
 declare -r SCRIPT_URL="https://raw.githubusercontent.com/jsugg/repo2file/main/src/$SCRIPT_NAME"
-declare -r SCRIPT_CHECKSUM_URL="https://gist.githubusercontent.com/jsugg/56a75fe37a4c0a15786c10b63a5f1ccc/raw/6adb1d03f08bd25a7eadb9ee0b0b46de86bde06a/repo2file.sha256"
+declare -r SCRIPT_CHECKSUM_URL="https://gist.githubusercontent.com/jsugg/56a75fe37a4c0a15786c10b63a5f1ccc/raw/0b754fa09b3672a446dabda291144552467f57e6/repo2file.sha256"
 declare INSTALL_DIR=""
 declare -r DEFAULT_INSTALL_DIR="$HOME/bin"
 declare -r DEPENDENCIES=("curl" "sha256sum" "tree" "file" "git" "awk")
