@@ -339,13 +339,14 @@ function install_script() {
         log "${RED}Failed to download and install ${SCRIPT_NAME} after $retries attempts.${NC}"
         exit $SCRIPT_DOWNLOAD_FAILED
     fi
-    log "${GREEN}Installation completed. Run '${YELLOW}${SCRIPT_NAME} -h${GREEN}' to see usage information.${NC}"
+    log "${GREEN}Installation completed.${NC}"
 }
 
 # Entry point
 function main() {
     verify_and_install_dependencies
     install_script
+    echo "Run \`${SCRIPT_NAME} -h\` to see usage information."
 }
 
 # Execute the main function
