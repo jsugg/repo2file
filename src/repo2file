@@ -9,6 +9,7 @@ declare -r GIT_REPO_ERR_CODE=5
 declare -r FILE_ACCESS_ERR_CODE=6
 declare -r EMPTY_DIR_ERR_CODE=7
 declare -r DIR_CREATION_ERR_CODE=8
+declare -r NO_FILES_TO_PROCESS_ERR_CODE=9
 
 # Script metadata
 declare -r SCRIPT_NAME=$(basename "$0")
@@ -19,6 +20,7 @@ declare exclude_patterns=()
 declare exclude_regex=""
 declare temp_dir=""
 declare output_file_name="repo2file.md"
+declare -a file_list=()
 
 # Set traps for different exit scenarios
 trap 'graceful_exit $ERR_CODE' ERR
@@ -401,8 +403,7 @@ function create_unique_dir() {
 
 # Function to replicate the project in a temporary directory
 function replicate_in_temp_dir() {
-    local file_list=("$@")
-    local tmp="${TMPDIR}"
+    local tmp="${TMPDIR:-/tmp/}"
 
     # Create a temporary directory
     [ $verbose -eq 1 ] && printf "Creating temporary directory\n"
@@ -412,12 +413,12 @@ function replicate_in_temp_dir() {
     # Copy the files to the temporary directory
     [ $verbose -eq 1 ] && printf "Copying files:\n"
     for file in "${file_list[@]}"; do
-        temp_file_dir="$temp_dir/$(dirname "$file")"
-        mkdir -p "$temp_file_dir" || {
-            printf "Error creating directory: %s\n" "$temp_file_dir"
+        local target_dir="$temp_dir/$(dirname "$file")"
+        mkdir -p "$target_dir" || {
+            printf "Error creating directory: %s\n" "$target_dir"
             exit $DIR_CREATION_ERR_CODE
         }
-        cp -a "$WORKING_DIR/$file" "$temp_file_dir/$(basename "$file")" || {
+        cp -a "$WORKING_DIR/$file" "$target_dir/" || {
             printf "Error copying file: %s\n" "$file"
             exit $FILE_ACCESS_ERR_CODE
         }
@@ -429,36 +430,29 @@ function replicate_in_temp_dir() {
 
 # Function to collect and filter files based on exclude patterns
 function collect_files() {
-    local files=()
     local cmd="git ls-files -z --cached -o"
+    file_list=()  # Clear global array
 
     [[ $use_gitignore -eq 1 ]] && cmd+=" --exclude-standard --exclude-from=$(git rev-parse --git-dir)/info/exclude"
 
     # Collect the files
     while IFS= read -r -d '' file; do
-        #if [[ ! "$file" =~ $exclude_regex && "$file" != "$output_file_name" && "$file" != "$SCRIPT_NAME" && "$file" != ".gitignore" && ! -d "$WORKING_DIR/$file" ]]; then
-        if [[ ! "$file" =~ $exclude_regex && "$file" != "$output_file_name" && "$file" != "$SCRIPT_NAME" && "$file" != ".gitignore" ]]; then
-            files+=("$file")
+        if [[ ! "$file" =~ $exclude_regex && "$file" != "$output_file_name" && "$file" != "$SCRIPT_NAME" && "$file" != ".gitignore" && ! -d "$WORKING_DIR/$file" ]]; then
+            if is_text_file "$file"; then
+                file_list+=("$file")
+                [ $verbose -eq 1 ] && printf "  %s\n" "$file"
+            fi
         fi
-    done < <($cmd || true)
-    git_exit_code=$?
+    done < <($cmd 2>/dev/null || true)
 
     # Check if git ls-files command failed
-    if [ $git_exit_code -ne 0 ]; then
-        printf "Error: git ls-files command failed with exit code %d\n" $git_exit_code
-        exit $git_exit_code
+    local git_exit_code=$?
+    if [ $git_exit_code -ne 0 ] && [ $verbose -eq 1 ]; then
+        printf "Warning: git ls-files command had exit code %d\n" $git_exit_code
+        # exit $git_exit_code
     fi
 
-    # Filter the binary files
-    local filtered_files=()
-    for file in "${files[@]}"; do
-        if is_text_file "$file"; then
-            filtered_files+=("$file")
-        fi
-    done
-    files=("${filtered_files[@]}")
-
-    printf "%s " "${files[@]}"
+    [ $verbose -eq 1 ] && printf "Collected %d files\n" "${#file_list[@]}"
 }
 
 # Function to append the header to the output file
@@ -489,7 +483,10 @@ function append_file_content() {
     local full_file_path="$temp_dir/$relative_file_path"
 
     # Check if the file exists and is readable
-    [[ ! -f "$full_file_path" || ! -r "$full_file_path" ]] && printf -- "File %s cannot be read or does not exist.\n" "$full_file_path" && return
+    if [[ ! -f "$full_file_path" || ! -r "$full_file_path" ]]; then
+        printf -- "File %s cannot be read or does not exist.\n" "$full_file_path"
+        return
+    fi
 
     # Append the file content to the output file
     printf "## File: %s\n" "$relative_file_path" >>"$output_file_name"
@@ -503,7 +500,7 @@ function append_file_content() {
         {
             printf -- "\`\`\`\n"
             cat "$full_file_path"
-            printf -- "\`\`\`\n\n"
+            printf -- "\n\`\`\`\n\n"
         }  >> "$output_file_name"
     fi
     printf -- "---\n" >>"$output_file_name"
@@ -531,21 +528,23 @@ function display_progress_bar() {
 
 # Process files in the project directory to be appended to the output file
 function process_files() {
-    local temp_dir=$1
-    shift
-    local file_list=("$@")
     local total_files=${#file_list[@]}
     local processed_files=0
     local last_updated=-1
 
-    [ $verbose -eq 1 ] && printf -- "Processing %d files...\n" "${#file_list[@]}"
+    # Skip processing if no files
+    if [[ $total_files -eq 0 ]]; then
+        [ $verbose -eq 1 ] && printf -- "No files to process.\n"
+        cleanup
+        exit $NO_FILES_TO_PROCESS_ERR_CODE
+    fi
+
+    [ $verbose -eq 1 ] && printf -- "Processing %d files...\n" "$total_files"
 
     for file in "${file_list[@]}"; do
-        local relative_file_path="${file#"${WORKING_DIR}/"}"
+        [ $verbose -eq 1 ] && printf -- "\n     %s\n" "$file"
 
-        [ $verbose -eq 1 ] && printf -- "\n     %s\n" "$relative_file_path"
-
-        append_file_content "$relative_file_path"
+        append_file_content "$file"
 
         if [ $progress -eq 1 ]; then
             ((processed_files++))
@@ -565,27 +564,34 @@ function main() {
     parse_args "$@"
     check_dependencies
     check_git_repository
+
     [ $verbose -eq 1 ] && printf "Collecting files...\n"
-    local file_list=($(collect_files))
-    [[ ${#file_list[@]} -eq 0 ]] && {
+    collect_files
+
+    if [[ ${#file_list[@]} -eq 0 ]]; then
         printf "Error: No files to process.\n"
         exit $EMPTY_DIR_ERR_CODE
-    }
+    fi
 
-    # Print the collected file_list
-    [ $verbose -eq 1 ] && printf "Collected file_list:\n"
-    for file in "${file_list[@]}"; do
-        [ $verbose -eq 1 ] && printf "  %s\n" "$file"
-    done
+    if [ $verbose -eq 1 ]; then
+        printf "Collected file_list:\n"
+        for file in "${file_list[@]}"; do
+            printf "  %s\n" "$file"
+        done
+    fi
 
     [ $verbose -eq 1 ] && printf "Appending header...\n"
     append_header
+
     [ $verbose -eq 1 ] && printf "Appending project tree...\n"
     append_directory_structure
+
     [ $verbose -eq 1 ] && printf "Replicating project...\n"
-    replicate_in_temp_dir "${file_list[@]}"
+    replicate_in_temp_dir
+
     [ $verbose -eq 1 ] && printf "Processing files...\n"
-    process_files "$temp_dir" "${file_list[@]}"
+    process_files
+
     cleanup
     [[ $quiet -eq 0 ]] && printf -- "Operation completed. Output stored in %s\n\n" "$output_file_name"
 }
